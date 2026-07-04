@@ -300,9 +300,12 @@ def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
     if not z_all:
         return fig
     z_floor = float(min(z.min() for z in z_all)) - 0.08
-    max_abs_pl = max((float(np.max(np.abs(cv[5]))) for cv in curves
-                      if cv[5] is not None and len(cv[5])), default=1.0) or 1.0
-    PL_SCALE = [[0.0, "#C23B80"], [0.5, "#232A40"], [1.0, "#2E9E5B"]]
+    # curtain color = return on premium, not $ P/L: a symmetric $ range let
+    # deep-ITM contracts (huge absolute swings) wash every ordinary strike
+    # into the gray midpoint. Return per dollar spent is comparable across
+    # strikes AND expiries; clip at ±100% and sign-sqrt boost so ±25%
+    # already reads clearly green/red.
+    PL_SCALE = [[0.0, "#FF2E55"], [0.5, "#20263B"], [1.0, "#12E27C"]]
 
     for i, (exp, dte, sub, c, shape, profit) in enumerate(curves):
         if len(c) == 0:
@@ -313,9 +316,15 @@ def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
         log_k = np.log10(c["strike"].values)
         z = np.log10(c["call"].values)
 
-        pl_col = (profit if profit is not None
-                  else np.full(len(c), np.nan))
-        pl_line = ("<br>model P/L %{customdata[2]:+,.2f}"
+        if profit is not None:
+            ret = profit / c["call"].values          # return on premium
+            boosted = np.sign(ret) * np.sqrt(np.minimum(np.abs(ret), 1.0))
+            pl_col, ret_col = profit, ret
+        else:
+            ret, boosted = None, None
+            pl_col = ret_col = np.full(len(c), np.nan)
+        pl_line = ("<br>model P/L %{customdata[2]:+,.2f} "
+                   "(%{customdata[3]:+.0%} on premium)"
                    if profit is not None else "")
         fig.add_trace(go.Scatter3d(
             x=np.full(len(c), dte), y=log_k, z=z,
@@ -323,7 +332,7 @@ def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
             name=f"{exp.date()} calls · pattern {letter}",
             legendgroup=f"fam-{letter}",
             customdata=np.stack([c["strike"].values, c["call"].values,
-                                 pl_col], axis=-1),
+                                 pl_col, ret_col], axis=-1),
             hovertemplate=(f"{exp.date()} · {dte}d"
                            "<br>strike $%{customdata[0]:,.2f}"
                            "<br>call $%{customdata[1]:,.2f}"
@@ -342,16 +351,18 @@ def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
                 tri_j += [q + 1, n_pts + q + 1]
                 tri_k += [n_pts + q, n_pts + q]
             mesh_kw = dict(x=xs, y=ys, z=zs, i=tri_i, j=tri_j, k=tri_k,
-                           opacity=0.30, hoverinfo="skip",
+                           opacity=0.45, hoverinfo="skip",
                            name=f"{exp.date()} expected P/L",
                            legendgroup=f"fam-{letter}", showlegend=False,
-                           flatshading=True)
-            if profit is not None:
-                mesh_kw.update(intensity=np.concatenate([profit, profit]),
-                               colorscale=PL_SCALE, cmin=-max_abs_pl,
-                               cmax=max_abs_pl, cmid=0.0, showscale=False)
+                           flatshading=True,
+                           lighting=dict(ambient=0.95, diffuse=0.3,
+                                         specular=0.0))
+            if boosted is not None:
+                mesh_kw.update(intensity=np.concatenate([boosted, boosted]),
+                               colorscale=PL_SCALE, cmin=-1.0,
+                               cmax=1.0, cmid=0.0, showscale=False)
             else:
-                mesh_kw.update(color=color)
+                mesh_kw.update(color=color, opacity=0.30)
             fig.add_trace(go.Mesh3d(**mesh_kw))
 
         p = sub[(sub["put"] > 0) & np.isfinite(sub["put"])]

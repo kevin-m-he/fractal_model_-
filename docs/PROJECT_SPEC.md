@@ -237,10 +237,15 @@ at the fractal projection's spot for that expiry (`app._model_prices_at_expiries
 maps each expiry's calendar days to business days on the best-confidence
 median path, using the longest-horizon scale beyond it and carrying the last
 value flat past every horizon; with no projections it falls back to today's
-spot, i.e. intrinsic − premium). Curtain intensity is per-strike P/L on a
-red→neutral→green diverging scale centered at 0, symmetric range across all
-expiries so color is comparable; the same P/L appears on the call ribbons'
-hover. This is the projection layer's opinion made volumetric — and it
+spot, i.e. intrinsic − premium). Curtain intensity is per-strike **return on
+premium** (P/L ÷ today's price) on a red→neutral→green diverging scale
+centered at 0, clipped at ±100% and sign-sqrt boosted so ±25% already reads
+clearly — a plain $ P/L scale let deep-ITM contracts wash every ordinary
+strike into the gray midpoint. Both $ P/L and % return appear on the call
+ribbons' hover. Expect a lot of red: settling at the model's *median* path,
+an OTM call that expires worthless is a −100% loss and ITM calls surrender
+their time value; green appears exactly where the projected move beats what
+the market is charging for it. This is the projection layer's opinion made volumetric — and it
 inherits all of the projection layer's measured error (§6 still applies).
 
 **Percent loading bars.** Chart renders report real stage-based progress

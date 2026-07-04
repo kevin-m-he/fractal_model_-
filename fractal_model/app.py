@@ -324,9 +324,9 @@ def _render_option_chain(ticker):
                  "each ribbon is one expiry's price-vs-strike curve; "
                  "ribbons sharing a color have the same fractal shape "
                  "(calls solid, puts dim, spot dotted) · the fill under "
-                 "each ribbon is model-expected profit at expiry: green = "
-                 "projected payoff exceeds today's premium, red = expected "
-                 "loss",
+                 "each ribbon is model-expected return on premium at "
+                 "expiry: green = projected payoff beats today's premium, "
+                 "red = expected loss (full color = ±100%)",
                  style={"color": "#6B7488", "fontSize": "12px",
                         "marginBottom": "4px", "fontFamily": "monospace"}),
                  dcc.Graph(figure=fig, config={"displModeBar": True})],
