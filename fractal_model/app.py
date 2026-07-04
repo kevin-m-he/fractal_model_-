@@ -466,8 +466,23 @@ def run_bt(_n, ticker):
 
 
 def main():
+    import socket
+    import sys
     import threading
     import webbrowser
+
+    # a stale instance holding the port would make the browser open OLD
+    # code with zero indication anything is wrong — fail loudly instead
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        busy = probe.connect_ex(("127.0.0.1", 8050)) == 0
+    finally:
+        probe.close()
+    if busy:
+        print("Another Fractal Model server is already running on port 8050.")
+        print("Close its console window (it may be running older code) and")
+        print("launch again.")
+        sys.exit(1)
 
     # launched from the desktop shortcut there's no terminal user watching —
     # pop the browser once the server has had a moment to bind
