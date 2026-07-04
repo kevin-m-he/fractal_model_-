@@ -49,6 +49,8 @@ class MotifMatch:
     hurst_consistency: float # in [0,1], 1 = perfectly obeys s_a = s_t^H
     score: float
     dates: dict = field(default_factory=dict)
+    hist_shape: np.ndarray | None = None  # shape-space curve of the hist window
+    live_shape: np.ndarray | None = None  # shape-space curve of the live window
 
 
 def to_shape(log_p: np.ndarray, k: int = SHAPE_POINTS) -> tuple[np.ndarray, float]:
@@ -83,6 +85,32 @@ def _hurst_consistency(time_ratio: float, amp_ratio: float, h: float) -> float:
     expected = time_ratio ** h
     d = abs(np.log(amp_ratio / expected))
     return float(np.exp(-d))
+
+
+def group_families(shapes: list[np.ndarray], min_corr: float = 0.85) -> list[int]:
+    """Cluster shape-space curves into pattern families.
+
+    Greedy leader clustering: each shape joins the first family whose
+    leader it correlates with at >= min_corr, else founds a new family.
+    Returns a family id per input shape (order-stable, so pass shapes in
+    descending match-score order and leaders are the strongest examples).
+    Everything in one family is 'the same fractal' for display purposes —
+    the UI gives each family one color.
+    """
+    leaders: list[np.ndarray] = []
+    ids: list[int] = []
+    for s in shapes:
+        fid = None
+        for i, leader in enumerate(leaders):
+            corr, _ = _shape_similarity(leader, s)
+            if corr >= min_corr:
+                fid = i
+                break
+        if fid is None:
+            leaders.append(s)
+            fid = len(leaders) - 1
+        ids.append(fid)
+    return ids
 
 
 def find_motifs(
@@ -143,6 +171,7 @@ def find_motifs(
                     "live_start": close.index[live_start],
                     "live_end": close.index[-1],
                 },
+                hist_shape=shape, live_shape=live_shape,
             ))
 
     matches.sort(key=lambda m: m.score, reverse=True)

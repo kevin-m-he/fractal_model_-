@@ -26,15 +26,17 @@ warnings.filterwarnings("ignore")
 import dash
 from dash import Dash, dcc, html, Input, Output, State, dash_table, no_update
 
-from .data import get_history, get_shares
+from .data import get_history, get_option_chain, get_shares
 from .projection import project_all_scales
 from .backtest import walk_forward
 from .scanner import top_following_fractals
-from .viz3d import fractal_figure_3d, fractal_figure_2d, BG
+from .viz3d import (fractal_figure_3d, fractal_figure_2d,
+                    option_chain_figure_3d, BG)
 
 BLANK = {"paper_bgcolor": BG, "plot_bgcolor": BG, "template": "plotly_dark"}
 
-app = Dash(__name__, title="Fractal Model")
+app = Dash(__name__, title="Fractal Model",
+           suppress_callback_exceptions=True)  # tab bodies render dynamically
 server = app.server
 
 DISCLAIMER = ("Pattern-implied scenarios with measured error — not financial "
@@ -85,6 +87,7 @@ def render_tab(tab, ticker):
 
 def _viz_layout(ticker):
     return html.Div([
+        dcc.Store(id="viz-mode", data="price"),
         html.Div([
             dcc.Input(id="ticker-in", value=ticker, type="text",
                       placeholder="ticker, e.g. AAPL or BTC-USD",
@@ -97,17 +100,36 @@ def _viz_layout(ticker):
                                "color": "#0E1220", "border": "none",
                                "padding": "10px 18px", "borderRadius": "6px",
                                "fontWeight": 700, "cursor": "pointer"}),
+            html.Button("switch to option-chain fractal", id="mode-btn",
+                        n_clicks=0,
+                        style={"marginLeft": "10px", "backgroundColor": "#0E1220",
+                               "color": "#E8C400", "border": "1px solid #E8C400",
+                               "padding": "10px 18px", "borderRadius": "6px",
+                               "fontWeight": 700, "cursor": "pointer"}),
         ], style={"marginBottom": "14px"}),
         dcc.Loading(html.Div(id="viz-content"), color="#E8C400", type="dot"),
     ])
 
 
+@app.callback(Output("viz-mode", "data"), Output("mode-btn", "children"),
+              Input("mode-btn", "n_clicks"), State("viz-mode", "data"),
+              prevent_initial_call=True)
+def flip_mode(_n, mode):
+    new = "options" if mode == "price" else "price"
+    label = ("switch to price fractal" if new == "options"
+             else "switch to option-chain fractal")
+    return new, label
+
+
 @app.callback(
     Output("viz-content", "children"), Output("cur-ticker", "data"),
-    Input("go-btn", "n_clicks"), State("ticker-in", "value"),
+    Input("go-btn", "n_clicks"), Input("viz-mode", "data"),
+    State("ticker-in", "value"),
     prevent_initial_call=False)
-def render_viz(_n, ticker):
+def render_viz(_n, mode, ticker):
     ticker = (ticker or "NFLX").strip().upper()
+    if mode == "options":
+        return _render_option_chain(ticker), ticker
     try:
         df = get_history(ticker)
     except Exception as e:
@@ -118,12 +140,14 @@ def render_viz(_n, ticker):
         return html.Div(f"No fractal motifs found for {ticker} at any scale.",
                         style={"color": "#8B6A2B"}), ticker
     best = projs[0]
+    # matches from every scale, so pattern families color across scales
+    all_matches = [m for p in projs for m in p.matches[:4]]
     try:
         shares = get_shares(ticker, df.index)
     except Exception:
         shares = None
-    fig3d = fractal_figure_3d(ticker, df, best.matches, best, shares=shares)
-    fig2d = fractal_figure_2d(ticker, df, best.matches, best)
+    fig3d = fractal_figure_3d(ticker, df, all_matches, best, shares=shares)
+    fig2d = fractal_figure_2d(ticker, df, all_matches, best)
 
     cards = []
     for p in projs:
@@ -147,17 +171,49 @@ def render_viz(_n, ticker):
 
     return html.Div([
         html.Div(cards, style={"display": "flex", "flexWrap": "wrap"}),
-        html.Div([html.Div("3D fractal — drag to rotate", style={"color": "#6B7488",
+        html.Div([html.Div("3D fractal — drag to rotate · boxes sharing a "
+                 "color are the same recurring pattern; the translucent box "
+                 "of that color is the live window it refers to",
+                 style={"color": "#6B7488",
                  "fontSize": "12px", "marginBottom": "4px",
                  "fontFamily": "monospace"}),
                  dcc.Graph(figure=fig3d, config={"displModeBar": True})],
                  style=CARD),
-        html.Div([html.Div("2D view with motif boxes (compare to your "
-                 "annotated charts)", style={"color": "#6B7488",
+        html.Div([html.Div("2D view with motif boxes — same letter = same "
+                 "pattern (A′ marks the live window of family A)",
+                 style={"color": "#6B7488",
                  "fontSize": "12px", "marginBottom": "4px",
                  "fontFamily": "monospace"}),
                  dcc.Graph(figure=fig2d)], style=CARD),
     ]), ticker
+
+
+def _render_option_chain(ticker):
+    try:
+        chain = get_option_chain(ticker)
+    except Exception as e:
+        return html.Div(f"Could not load option chain for '{ticker}': {e}",
+                        style={"color": "#C23B80"})
+    if chain is None or len(chain) == 0:
+        return html.Div(f"No listed options found for {ticker} — indices, "
+                        "crypto and some foreign tickers have no chain.",
+                        style={"color": "#8B6A2B"})
+    try:
+        spot = float(get_history(ticker)["Close"].iloc[-1])
+    except Exception:
+        spot = None
+    fig = option_chain_figure_3d(ticker, chain, spot=spot)
+    n_exp = chain["expiration"].nunique()
+    return html.Div([
+        html.Div([html.Div(f"option-chain fractal — {n_exp} expirations · "
+                 "each ribbon is one expiry's price-vs-strike curve; "
+                 "ribbons sharing a color have the same fractal shape "
+                 "(calls solid, puts dim, spot dotted)",
+                 style={"color": "#6B7488", "fontSize": "12px",
+                        "marginBottom": "4px", "fontFamily": "monospace"}),
+                 dcc.Graph(figure=fig, config={"displModeBar": True})],
+                 style=CARD),
+    ])
 
 
 def _top_layout():

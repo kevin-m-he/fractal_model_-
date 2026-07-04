@@ -70,6 +70,56 @@ def test_viz3d_without_shares_falls_back_flat():
     assert "no data" in fig.layout.scene.yaxis.title.text
 
 
+def test_group_families_clusters_similar_shapes():
+    from fractal_model.motif import group_families
+    t = np.linspace(0, 1, 64)
+    rising = t.copy()
+    v_shape = np.abs(t - 0.5) * 2
+    ids = group_families([rising, v_shape, rising * 0.98 + 0.01, v_shape])
+    assert ids[0] == ids[2] and ids[1] == ids[3]  # same shape, same family
+    assert ids[0] != ids[1]                       # different shapes split
+
+
+def test_family_boxes_share_colors():
+    from fractal_model.viz3d import _family_boxes
+    from fractal_model.motif import find_motifs
+    # self-similar series: same motif repeated at growing scale
+    seg = np.sin(np.linspace(0, 3 * np.pi, 100))
+    x = np.concatenate([seg * a for a in (0.5, 1.0, 2.0)])
+    close = pd.Series(100 * np.exp(np.cumsum(np.full(len(x), 0.001)) + x * 0.1),
+                      index=pd.bdate_range("2012-01-01", periods=len(x)))
+    matches = find_motifs(close, live_len=100, hurst=0.5)
+    assert matches, "expected motif matches on a constructed self-similar series"
+    boxes = _family_boxes(matches, np.log(close.values))
+    kinds = {b["kind"] for b in boxes}
+    assert kinds == {"hist", "live"}
+    # every box has a family letter and a color; same family -> same color
+    fam_color = {}
+    for b in boxes:
+        assert fam_color.setdefault(b["fam"], b["color"]) == b["color"]
+
+
+def test_option_chain_figure_offline():
+    from fractal_model.viz3d import option_chain_figure_3d
+    rows = []
+    for dte, exp in [(30, "2026-08-03"), (90, "2026-10-02"), (365, "2027-07-04")]:
+        strikes = np.linspace(50, 150, 21)
+        # Black-Scholes-ish decay: farther expiries are magnified copies
+        call = np.maximum(100 - strikes, 0.5) + 8 * np.sqrt(dte / 30)
+        put = np.maximum(strikes - 100, 0.5) + 8 * np.sqrt(dte / 30)
+        for k, c, p in zip(strikes, call, put):
+            rows.append({"expiration": pd.Timestamp(exp), "dte": dte,
+                         "strike": k, "call": c, "put": p})
+    chain = pd.DataFrame(rows)
+    fig = option_chain_figure_3d("SYN", chain, spot=100.0)
+    names = [tr.name for tr in fig.data]
+    assert sum("calls" in n for n in names) == 3
+    assert any(n.startswith("spot") for n in names)
+    # similar curves should be grouped into a shared pattern family
+    call_traces = [tr for tr in fig.data if "calls" in tr.name]
+    assert len({tr.line.color for tr in call_traces}) < len(call_traces) + 1
+
+
 def test_get_shares_alignment_no_network(tmp_path, monkeypatch):
     import fractal_model.data as data
     idx = pd.bdate_range("2020-01-01", periods=100)

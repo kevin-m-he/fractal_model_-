@@ -185,9 +185,18 @@ Axes: **time × log₁₀ shares outstanding × log₁₀ price**. Price path = 
 Each motif = translucent `Mesh3d` box spanning its time/price extent with depth
 over the window's share-count range (padded to a visible minimum, since share
 counts barely move inside a window) — the 3D generalization of the hand-drawn
-rectangles. Matched historical↔live pairs share a color from the annotation
-palette. A 2D view (`fractal_figure_2d`) reproduces the owner's boxed-chart
+rectangles. A 2D view (`fractal_figure_2d`) reproduces the owner's boxed-chart
 style for direct comparison.
+
+**Pattern-family coloring.** Color now encodes *identity*, not match rank:
+every motif occurrence (historical windows from all five scales, plus each
+scale's live window) is clustered in shape space by greedy leader clustering
+(`motif.group_families`, Pearson ≥ 0.85 to the family leader), and each family
+gets one palette color. Boxes sharing a color are the same recurring fractal;
+the translucent box of that color is the live pattern the solid boxes refer
+to. The 2D view letters the families (`A` = historical occurrence, `A′` = live
+window). One legend entry per family (grouped via `legendgroup`), per-box
+detail on hover.
 
 The depth axis was switched from volume to shares outstanding so the geometry
 models **company valuation instead of order flow**: `log₁₀ cap = log₁₀ price +
@@ -200,6 +209,27 @@ oldest known count, and tickers with no share data at all (indices, some
 crypto) render with a flat shares axis. Hover text reports per-day price,
 shares, and market cap. Fetching lives in `data.get_shares` with a weekly-TTL
 parquet cache beside the price cache.
+
+The volume-vs-shares question was revisited when family coloring landed and
+the choice is **shares outstanding, affirmed**: motif detection runs on price
+shape alone, so the depth axis carries context rather than signal, and stable
+valuation context beats daily volume noise, which log-smoothing had mostly
+flattened into fake geometry anyway. Volume remains in the cached OHLCV data
+for any future analysis that wants it.
+
+**Option-chain fractal view** (`option_chain_figure_3d`). A button in the
+Visualizer swaps the entire chart for the listed option chain in
+(days-to-expiry × log₁₀ strike × log₁₀ option price) space. Each expiration's
+call curve C(K) is one ribbon; ribbons are clustered into shape families with
+the same `to_shape`/`group_families` machinery (Pearson ≥ 0.90 over log-price
+shape), so expiries whose strike-geometry is the same fractal shape share a
+color — the near-homogeneity of the option surface across maturities, made
+visible. Puts render dimmer in their expiry's family color; the spot price is
+a dotted floor line. Data comes from `data.get_option_chain`: up to 10
+expirations sampled evenly across the listed curve (front week to LEAPS),
+bid/ask midpoint where two-sided, last trade otherwise, hourly-TTL parquet
+cache. Tickers without listed options get a friendly message instead of a
+chart.
 
 ---
 

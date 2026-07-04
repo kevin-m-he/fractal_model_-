@@ -19,9 +19,20 @@ nicer chart.
 
 - **3D fractal visualizer** — search any ticker, rotate its time/shares/price
   valuation fractal, see detected self-affine motifs as colored boxes (a 3D
-  generalization of hand-drawn chart annotations). Hover shows price, share
-  count, and market cap per day; tickers without share data fall back to a
-  flat shares axis.
+  generalization of hand-drawn chart annotations). **Boxes sharing a color are
+  the same recurring pattern**: occurrences are clustered into families in
+  shape space, and each family's translucent box marks the live window it
+  refers to (the 2D view letters them — `A` historical, `A′` live). Hover
+  shows price, share count, and market cap per day; tickers without share
+  data fall back to a flat shares axis. The depth axis is shares outstanding
+  rather than volume by design: motif matching runs on price shape alone, so
+  the third axis is context, and slow-moving valuation context (buybacks,
+  dilution) reads better than daily volume noise.
+- **Option-chain fractal** — one button switches the whole chart to the
+  listed option chain: each expiration's price-vs-strike curve is a ribbon in
+  (days-to-expiry × log strike × log price) space, and ribbons are colored by
+  the same shape-family machinery, exposing the term structure's
+  self-similarity. Calls solid, puts dim, spot marked.
 - **All-scales projection** — from ~3-month to ~4-year patterns, each with a
   buy zone, sell target, timeframe, and an explicit confidence score, ranked by
   confidence.

@@ -12,6 +12,7 @@ import os
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -19,6 +20,7 @@ CACHE_DIR = Path(os.environ.get("FRACTAL_CACHE", Path.home() / ".fractal_model_c
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_TTL_SECONDS = 6 * 3600  # refresh cached data every 6 hours
 SHARES_TTL_SECONDS = 7 * 24 * 3600  # share counts move on buybacks/dilution, not daily
+OPTIONS_TTL_SECONDS = 3600  # option quotes go stale fast; refresh hourly
 
 REQUIRED_COLS = ["Open", "High", "Low", "Close", "Volume"]
 
@@ -33,6 +35,10 @@ def _cache_path(ticker: str) -> Path:
 
 def _shares_cache_path(ticker: str) -> Path:
     return CACHE_DIR / f"{_safe_name(ticker)}_shares.parquet"
+
+
+def _options_cache_path(ticker: str) -> Path:
+    return CACHE_DIR / f"{_safe_name(ticker)}_options.parquet"
 
 
 def _from_cache(ticker: str, max_age: float = CACHE_TTL_SECONDS) -> pd.DataFrame | None:
@@ -206,3 +212,74 @@ def get_shares(ticker: str, index: pd.DatetimeIndex) -> pd.Series | None:
         return None
     aligned = s.reindex(s.index.union(index)).ffill().bfill().reindex(index)
     return aligned.astype(float)
+
+
+def _mid_or_last(quote: pd.DataFrame) -> pd.Series:
+    """Bid/ask midpoint where a two-sided market exists, else last trade."""
+    bid = quote.get("bid")
+    ask = quote.get("ask")
+    last = quote.get("lastPrice")
+    mid = pd.Series(np.nan, index=quote.index)
+    if bid is not None and ask is not None:
+        two_sided = (bid > 0) & (ask > 0)
+        mid[two_sided] = (bid[two_sided] + ask[two_sided]) / 2.0
+    if last is not None:
+        mid = mid.fillna(last)
+    return mid
+
+
+def get_option_chain(ticker: str, max_expiries: int = 10) -> pd.DataFrame | None:
+    """Tidy option chain: one row per (expiration, strike) with call/put prices.
+
+    Columns: expiration (Timestamp), dte (calendar days), strike, call, put.
+    Expirations are sampled evenly across the listed curve (front week to
+    LEAPS) rather than taking only the front months, so the term structure
+    spans enough time to show self-similar geometry. Cached with an hourly
+    TTL. Returns None when the ticker has no listed options.
+    """
+    p = _options_cache_path(ticker)
+    if p.exists() and (time.time() - p.stat().st_mtime) < OPTIONS_TTL_SECONDS:
+        try:
+            df = pd.read_parquet(p)
+            if len(df) > 0:
+                return df
+        except Exception:
+            pass
+    try:
+        import yfinance as yf
+
+        tk = yf.Ticker(ticker)
+        expiries = list(tk.options or [])
+        if not expiries:
+            return None
+        if len(expiries) > max_expiries:
+            pick = np.unique(np.linspace(0, len(expiries) - 1,
+                                         max_expiries).round().astype(int))
+            expiries = [expiries[i] for i in pick]
+        today = pd.Timestamp.now().normalize()
+        frames = []
+        for e in expiries:
+            try:
+                ch = tk.option_chain(e)
+            except Exception:
+                continue
+            exp = pd.Timestamp(e)
+            calls = pd.DataFrame({"strike": ch.calls["strike"],
+                                  "call": _mid_or_last(ch.calls)})
+            puts = pd.DataFrame({"strike": ch.puts["strike"],
+                                 "put": _mid_or_last(ch.puts)})
+            merged = calls.merge(puts, on="strike", how="outer").sort_values("strike")
+            merged["expiration"] = exp
+            merged["dte"] = max((exp - today).days, 1)
+            frames.append(merged)
+        if not frames:
+            return None
+        out = pd.concat(frames, ignore_index=True)
+        out = out[["expiration", "dte", "strike", "call", "put"]]
+        try:
+            out.to_parquet(p)
+        except Exception:
+            pass  # cache is best-effort
+        return out
+    except Exception:
+        return None
