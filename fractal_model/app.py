@@ -45,20 +45,73 @@ DISCLAIMER = ("Pattern-implied scenarios with measured error — not financial "
 CARD = {"backgroundColor": "#131829", "border": "1px solid #232A40",
         "borderRadius": "10px", "padding": "16px", "marginBottom": "14px"}
 
+# ---------------- percent loading bars ----------------
+# Long callbacks run in their own request thread while a dcc.Interval in
+# the layout polls this dict, so the bar reports real stage-based percent
+# (single-user local app: a module-level dict is all the state we need).
+PROGRESS: dict[str, dict] = {}
+
+
+def _prog(key: str, pct: float, label: str = ""):
+    PROGRESS[key] = {"pct": int(max(0, min(100, pct))), "label": label}
+
+
+def _progress_area(key: str):
+    """Interval + bar + content slot replacing the old dcc.Loading wheel."""
+    return html.Div([
+        dcc.Interval(id=f"{key}-tick", interval=350),
+        html.Div(id=f"{key}-bar"),
+        html.Div(id=f"{key}-content"),
+    ])
+
+
+def _bar_children(key: str):
+    st = PROGRESS.get(key) or {"pct": 0, "label": ""}
+    pct, label = st["pct"], st["label"]
+    if pct <= 0 or pct >= 100:
+        return None
+    return html.Div([
+        html.Div(f"{pct}%" + (f" · {label}" if label else ""),
+                 style={"color": "#E8C400", "fontSize": "12px",
+                        "fontFamily": "monospace", "marginBottom": "4px"}),
+        html.Div(html.Div(style={"width": f"{pct}%", "height": "8px",
+                                 "backgroundColor": "#E8C400",
+                                 "borderRadius": "4px",
+                                 "transition": "width 350ms linear"}),
+                 style={"width": "100%", "backgroundColor": "#232A40",
+                        "borderRadius": "4px"}),
+    ], style={"margin": "12px 0"})
+
+
+VERSE = ("2 Corinthians 3:17, Now the Lord is the Spirit, and where the "
+         "Spirit of the Lord is, there is freedom. Verse of the Day "
+         "7/4/2026, Day of Launch")
+
 
 def _header():
     return html.Div([
         html.Div([
-            html.Span("FRACTAL", style={"color": "#E8C400", "fontWeight": 800}),
-            html.Span("MODEL", style={"color": "#F2E9DC", "fontWeight": 300}),
-        ], style={"fontSize": "26px", "letterSpacing": "3px",
-                  "fontFamily": "monospace"}),
-        html.Div("self-similar valuation structure across scale · "
-                 "time × shares outstanding × price", style={"color": "#6B7488",
-                 "fontSize": "12px", "fontFamily": "monospace"}),
-        html.Div(DISCLAIMER, style={"color": "#8B6A2B", "fontSize": "11px",
-                 "marginTop": "6px", "fontFamily": "monospace"}),
-    ], style={"padding": "18px 24px", "borderBottom": "1px solid #232A40"})
+            html.Div([
+                html.Span("FRACTAL", style={"color": "#E8C400",
+                                            "fontWeight": 800}),
+                html.Span("MODEL", style={"color": "#F2E9DC",
+                                          "fontWeight": 300}),
+            ], style={"fontSize": "26px", "letterSpacing": "3px",
+                      "fontFamily": "monospace"}),
+            html.Div("self-similar valuation structure across scale · "
+                     "time × shares outstanding × price",
+                     style={"color": "#6B7488",
+                            "fontSize": "12px", "fontFamily": "monospace"}),
+            html.Div(DISCLAIMER, style={"color": "#8B6A2B", "fontSize": "11px",
+                     "marginTop": "6px", "fontFamily": "monospace"}),
+        ]),
+        html.Div(VERSE, style={"color": "#8B6A2B", "fontSize": "11px",
+                 "fontFamily": "monospace", "textAlign": "right",
+                 "maxWidth": "380px", "lineHeight": "1.5",
+                 "marginLeft": "auto", "paddingLeft": "24px"}),
+    ], style={"padding": "18px 24px", "borderBottom": "1px solid #232A40",
+              "display": "flex", "justifyContent": "space-between",
+              "alignItems": "flex-start"})
 
 
 app.layout = html.Div([
@@ -107,8 +160,23 @@ def _viz_layout(ticker):
                                "padding": "10px 18px", "borderRadius": "6px",
                                "fontWeight": 700, "cursor": "pointer"}),
         ], style={"marginBottom": "14px"}),
-        dcc.Loading(html.Div(id="viz-content"), color="#E8C400", type="dot"),
+        _progress_area("viz"),
     ])
+
+
+@app.callback(Output("viz-bar", "children"), Input("viz-tick", "n_intervals"))
+def _viz_bar(_):
+    return _bar_children("viz")
+
+
+@app.callback(Output("top-bar", "children"), Input("top-tick", "n_intervals"))
+def _top_bar(_):
+    return _bar_children("top")
+
+
+@app.callback(Output("bt-bar", "children"), Input("bt-tick", "n_intervals"))
+def _bt_bar(_):
+    return _bar_children("bt")
 
 
 @app.callback(Output("viz-mode", "data"), Output("mode-btn", "children"),
@@ -128,26 +196,34 @@ def flip_mode(_n, mode):
     prevent_initial_call=False)
 def render_viz(_n, mode, ticker):
     ticker = (ticker or "NFLX").strip().upper()
-    if mode == "options":
-        return _render_option_chain(ticker), ticker
     try:
-        df = get_history(ticker)
-    except Exception as e:
-        return html.Div(f"Could not load '{ticker}': {e}",
-                        style={"color": "#C23B80"}), no_update
-    projs = project_all_scales(ticker, df["Close"])
-    if not projs:
-        return html.Div(f"No fractal motifs found for {ticker} at any scale.",
-                        style={"color": "#8B6A2B"}), ticker
-    best = projs[0]
-    # matches from every scale, so pattern families color across scales
-    all_matches = [m for p in projs for m in p.matches[:4]]
-    try:
-        shares = get_shares(ticker, df.index)
-    except Exception:
-        shares = None
-    fig3d = fractal_figure_3d(ticker, df, all_matches, best, shares=shares)
-    fig2d = fractal_figure_2d(ticker, df, all_matches, best)
+        if mode == "options":
+            return _render_option_chain(ticker), ticker
+        _prog("viz", 3, f"fetching {ticker} price history")
+        try:
+            df = get_history(ticker)
+        except Exception as e:
+            return html.Div(f"Could not load '{ticker}': {e}",
+                            style={"color": "#C23B80"}), no_update
+        projs = project_all_scales(
+            ticker, df["Close"],
+            progress=lambda i, n, lbl: _prog("viz", 10 + 60 * i / max(n, 1), lbl))
+        if not projs:
+            return html.Div(f"No fractal motifs found for {ticker} at "
+                            "any scale.", style={"color": "#8B6A2B"}), ticker
+        best = projs[0]
+        # matches from every scale, so pattern families color across scales
+        all_matches = [m for p in projs for m in p.matches[:4]]
+        _prog("viz", 74, "fetching shares outstanding")
+        try:
+            shares = get_shares(ticker, df.index)
+        except Exception:
+            shares = None
+        _prog("viz", 86, "rendering 3D scene")
+        fig3d = fractal_figure_3d(ticker, df, all_matches, best, shares=shares)
+        fig2d = fractal_figure_2d(ticker, df, all_matches, best)
+    finally:
+        _prog("viz", 100)
 
     cards = []
     for p in projs:
@@ -188,27 +264,69 @@ def render_viz(_n, mode, ticker):
     ]), ticker
 
 
+def _model_prices_at_expiries(projs, dtes):
+    """Fractal-projected spot for each expiry's calendar days-to-expiry.
+
+    Uses the best-confidence projection; expiries beyond its horizon use
+    the longest-horizon scale instead, and anything beyond every horizon
+    carries the last projected price flat. Calendar days are mapped to
+    business days (×5/7) to index the median path.
+    """
+    out = {}
+    if not projs:
+        return out
+    best = projs[0]
+    longest = max(projs, key=lambda p: p.horizon)
+    for d in dtes:
+        bd = max(int(round(int(d) * 5 / 7)), 1)
+        p = best if bd <= best.horizon else longest
+        idx = min(bd - 1, len(p.median_path) - 1)
+        out[int(d)] = float(p.median_path[idx])
+    return out
+
+
 def _render_option_chain(ticker):
     try:
-        chain = get_option_chain(ticker)
-    except Exception as e:
-        return html.Div(f"Could not load option chain for '{ticker}': {e}",
-                        style={"color": "#C23B80"})
-    if chain is None or len(chain) == 0:
-        return html.Div(f"No listed options found for {ticker} — indices, "
-                        "crypto and some foreign tickers have no chain.",
-                        style={"color": "#8B6A2B"})
-    try:
-        spot = float(get_history(ticker)["Close"].iloc[-1])
-    except Exception:
-        spot = None
-    fig = option_chain_figure_3d(ticker, chain, spot=spot)
+        _prog("viz", 4, f"downloading {ticker} option chain")
+        try:
+            chain = get_option_chain(
+                ticker,
+                progress=lambda i, n, lbl: _prog(
+                    "viz", 5 + 45 * i / max(n, 1),
+                    f"downloading chain — {lbl} ({i + 1}/{n})"))
+        except Exception as e:
+            return html.Div(f"Could not load option chain for '{ticker}': {e}",
+                            style={"color": "#C23B80"})
+        if chain is None or len(chain) == 0:
+            return html.Div(f"No listed options found for {ticker} — indices, "
+                            "crypto and some foreign tickers have no chain.",
+                            style={"color": "#8B6A2B"})
+        spot, exp_spot = None, {}
+        try:
+            _prog("viz", 55, "projecting expected profit at each expiry")
+            df = get_history(ticker)
+            spot = float(df["Close"].iloc[-1])
+            projs = project_all_scales(
+                ticker, df["Close"],
+                progress=lambda i, n, lbl: _prog("viz", 58 + 30 * i / max(n, 1),
+                                                 lbl))
+            exp_spot = _model_prices_at_expiries(projs, chain["dte"].unique())
+        except Exception:
+            pass  # no projection: fill falls back to profit at today's spot
+        _prog("viz", 92, "rendering 3D scene")
+        fig = option_chain_figure_3d(ticker, chain, spot=spot,
+                                     exp_spot=exp_spot)
+    finally:
+        _prog("viz", 100)
     n_exp = chain["expiration"].nunique()
     return html.Div([
         html.Div([html.Div(f"option-chain fractal — {n_exp} expirations · "
                  "each ribbon is one expiry's price-vs-strike curve; "
                  "ribbons sharing a color have the same fractal shape "
-                 "(calls solid, puts dim, spot dotted)",
+                 "(calls solid, puts dim, spot dotted) · the fill under "
+                 "each ribbon is model-expected profit at expiry: green = "
+                 "projected payoff exceeds today's premium, red = expected "
+                 "loss",
                  style={"color": "#6B7488", "fontSize": "12px",
                         "marginBottom": "4px", "fontFamily": "monospace"}),
                  dcc.Graph(figure=fig, config={"displModeBar": True})],
@@ -225,14 +343,21 @@ def _top_layout():
                            "cursor": "pointer"}),
         html.Span("  scans ~45 tickers across all scales — takes a minute",
                   style={"color": "#6B7488", "fontSize": "12px"}),
-        dcc.Loading(html.Div(id="top-content"), color="#E8C400", type="dot"),
+        _progress_area("top"),
     ])
 
 
 @app.callback(Output("top-content", "children"), Input("scan-btn", "n_clicks"),
               prevent_initial_call=True)
 def run_scan(_n):
-    df = top_following_fractals(n=10)
+    try:
+        _prog("top", 2, "starting universe scan")
+        df = top_following_fractals(
+            n=10,
+            progress=lambda i, n, t: _prog("top", 2 + 96 * i / max(n, 1),
+                                           f"scanned {t} ({i}/{n})"))
+    finally:
+        _prog("top", 100)
     if df.empty:
         return html.Div("Scan returned nothing — check network.",
                         style={"color": "#C23B80"})
@@ -272,7 +397,7 @@ def _bt_layout(ticker):
                            "borderRadius": "6px", "fontWeight": 700,
                            "cursor": "pointer"}),
         dcc.Store(id="bt-ticker", data=ticker),
-        dcc.Loading(html.Div(id="bt-content"), color="#E8C400", type="dot"),
+        _progress_area("bt"),
     ])
 
 
@@ -280,15 +405,22 @@ def _bt_layout(ticker):
               State("bt-ticker", "data"), prevent_initial_call=True)
 def run_bt(_n, ticker):
     try:
+        _prog("bt", 3, f"fetching {ticker} history")
         df = get_history(ticker)
-        projs = project_all_scales(ticker, df["Close"])
+        projs = project_all_scales(
+            ticker, df["Close"],
+            progress=lambda i, n, lbl: _prog("bt", 5 + 15 * i / max(n, 1), lbl))
         if not projs:
             return html.Div("No motifs to backtest.", style={"color": "#8B6A2B"})
         p = projs[0]
-        bt = walk_forward(ticker, df["Close"], live_len=p.live_len,
-                          horizon=p.horizon)
+        bt = walk_forward(
+            ticker, df["Close"], live_len=p.live_len, horizon=p.horizon,
+            progress=lambda i, n, lbl: _prog("bt", 22 + 76 * i / max(n, 1),
+                                             f"walk-forward {lbl}"))
     except Exception as e:
         return html.Div(f"Backtest failed: {e}", style={"color": "#C23B80"})
+    finally:
+        _prog("bt", 100)
     if bt is None:
         return html.Div("Not enough history for a walk-forward test.",
                         style={"color": "#8B6A2B"})
@@ -340,7 +472,8 @@ def main():
     # launched from the desktop shortcut there's no terminal user watching —
     # pop the browser once the server has had a moment to bind
     threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:8050")).start()
-    app.run(debug=False, host="127.0.0.1", port=8050)
+    # threaded so the progress-bar Interval polls while renders compute
+    app.run(debug=False, host="127.0.0.1", port=8050, threaded=True)
 
 
 if __name__ == "__main__":

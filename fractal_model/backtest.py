@@ -46,7 +46,9 @@ class BacktestReport:
 
 def walk_forward(ticker: str, close: pd.Series, live_len: int,
                  horizon: int, step: int | None = None,
-                 min_history: int | None = None) -> BacktestReport | None:
+                 min_history: int | None = None,
+                 progress=None) -> BacktestReport | None:
+    """progress(done, total, label) fires per anchor when given."""
     if step is None:
         step = max(10, horizon // 2)
     if min_history is None:
@@ -59,7 +61,10 @@ def walk_forward(ticker: str, close: pd.Series, live_len: int,
     dir_hits, base_dir_hits = [], []
     trade_rets, mapes, base_mapes, confs, abs_errs = [], [], [], [], []
 
-    for T in anchors:
+    for k, T in enumerate(anchors):
+        if progress is not None:
+            progress(k, len(anchors),
+                     f"anchor {close.index[T].date()} ({k + 1}/{len(anchors)})")
         seen = close.iloc[:T]
         future = close.iloc[T: T + horizon]
         if len(future) < horizon:

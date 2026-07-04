@@ -150,15 +150,24 @@ SCALES = [
 ]
 
 
-def project_all_scales(ticker: str, close: pd.Series) -> list[Projection]:
+def project_all_scales(ticker: str, close: pd.Series,
+                       progress=None) -> list[Projection]:
     """Run projection at every scale that the data length allows and
-    return them ranked by confidence (the 'all scales' mode)."""
+    return them ranked by confidence (the 'all scales' mode).
+
+    progress, if given, is called as progress(done, total, label) after
+    each scale — the app uses it to drive the percent loading bar.
+    """
     out = []
-    for label, live_len, horizon in SCALES:
-        if len(close) >= live_len * 2:
-            p = project(ticker, close, live_len=live_len, horizon=horizon)
-            if p is not None:
-                p.scale_label = label
-                out.append(p)
+    runnable = [s for s in SCALES if len(close) >= s[1] * 2]
+    for i, (label, live_len, horizon) in enumerate(runnable):
+        if progress is not None:
+            progress(i, len(runnable), f"matching motifs — {label.strip()}")
+        p = project(ticker, close, live_len=live_len, horizon=horizon)
+        if p is not None:
+            p.scale_label = label
+            out.append(p)
+    if progress is not None:
+        progress(len(runnable), len(runnable), "ranking scales")
     out.sort(key=lambda p: p.confidence, reverse=True)
     return out

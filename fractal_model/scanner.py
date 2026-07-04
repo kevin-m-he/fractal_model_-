@@ -48,12 +48,18 @@ def scan_ticker(ticker: str) -> dict | None:
 
 
 def top_following_fractals(universe: list[str] | None = None,
-                           n: int = 10, workers: int = 6) -> pd.DataFrame:
+                           n: int = 10, workers: int = 6,
+                           progress=None) -> pd.DataFrame:
+    """progress(done, total, ticker) fires per finished ticker when given."""
     universe = universe or DEFAULT_UNIVERSE
     rows = []
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(scan_ticker, t): t for t in universe}
+        done = 0
         for f in as_completed(futs):
+            done += 1
+            if progress is not None:
+                progress(done, len(futs), futs[f])
             r = f.result()
             if r is not None:
                 rows.append(r)

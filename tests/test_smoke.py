@@ -111,13 +111,24 @@ def test_option_chain_figure_offline():
             rows.append({"expiration": pd.Timestamp(exp), "dte": dte,
                          "strike": k, "call": c, "put": p})
     chain = pd.DataFrame(rows)
-    fig = option_chain_figure_3d("SYN", chain, spot=100.0)
+    # model expects spot to drift to 110 by the far expiry
+    exp_spot = {30: 102.0, 90: 105.0, 365: 110.0}
+    fig = option_chain_figure_3d("SYN", chain, spot=100.0, exp_spot=exp_spot)
     names = [tr.name for tr in fig.data]
     assert sum("calls" in n for n in names) == 3
     assert any(n.startswith("spot") for n in names)
     # similar curves should be grouped into a shared pattern family
     call_traces = [tr for tr in fig.data if "calls" in tr.name]
     assert len({tr.line.color for tr in call_traces}) < len(call_traces) + 1
+    # under-line fill: one P/L curtain mesh per expiry, shaded by profit
+    curtains = [tr for tr in fig.data if tr.name and "expected P/L" in tr.name]
+    assert len(curtains) == 3
+    for tr in curtains:
+        assert tr.intensity is not None and len(tr.intensity) > 0
+    # deep ITM call at strike 50 for the 365d expiry: payoff 60 vs
+    # premium ~94 -> loss; sanity-check the profit signs vary
+    pl = np.asarray(curtains[-1].intensity)
+    assert pl.min() < 0
 
 
 def test_get_shares_alignment_no_network(tmp_path, monkeypatch):

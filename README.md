@@ -32,7 +32,14 @@ nicer chart.
   listed option chain: each expiration's price-vs-strike curve is a ribbon in
   (days-to-expiry × log strike × log price) space, and ribbons are colored by
   the same shape-family machinery, exposing the term structure's
-  self-similarity. Calls solid, puts dim, spot marked.
+  self-similarity. The space under each ribbon is filled with a curtain
+  shaded by **model-expected profit at expiry** — buy the call at today's
+  price, settle at the fractal projection's spot for that date; green means
+  the projected payoff exceeds the premium, red means expected loss (also on
+  hover). Calls solid, puts dim, spot marked.
+- **Percent loading bars** — every chart render reports real stage-based
+  progress (fetching history, matching motifs per scale, downloading chain
+  expirations, walk-forward anchors) instead of an indeterminate spinner.
 - **All-scales projection** — from ~3-month to ~4-year patterns, each with a
   buy zone, sell target, timeframe, and an explicit confidence score, ranked by
   confidence.

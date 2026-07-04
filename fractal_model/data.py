@@ -228,7 +228,8 @@ def _mid_or_last(quote: pd.DataFrame) -> pd.Series:
     return mid
 
 
-def get_option_chain(ticker: str, max_expiries: int = 10) -> pd.DataFrame | None:
+def get_option_chain(ticker: str, max_expiries: int = 10,
+                     progress=None) -> pd.DataFrame | None:
     """Tidy option chain: one row per (expiration, strike) with call/put prices.
 
     Columns: expiration (Timestamp), dte (calendar days), strike, call, put.
@@ -258,7 +259,9 @@ def get_option_chain(ticker: str, max_expiries: int = 10) -> pd.DataFrame | None
             expiries = [expiries[i] for i in pick]
         today = pd.Timestamp.now().normalize()
         frames = []
-        for e in expiries:
+        for i, e in enumerate(expiries):
+            if progress is not None:
+                progress(i, len(expiries), f"expiry {e}")
             try:
                 ch = tk.option_chain(e)
             except Exception:

@@ -231,6 +231,26 @@ bid/ask midpoint where two-sided, last trade otherwise, hourly-TTL parquet
 cache. Tickers without listed options get a friendly message instead of a
 chart.
 
+The space under each call ribbon is filled with a curtain `Mesh3d` shaded by
+**model-expected profit at expiry**: buy the call at today's premium, settle
+at the fractal projection's spot for that expiry (`app._model_prices_at_expiries`
+maps each expiry's calendar days to business days on the best-confidence
+median path, using the longest-horizon scale beyond it and carrying the last
+value flat past every horizon; with no projections it falls back to today's
+spot, i.e. intrinsic − premium). Curtain intensity is per-strike P/L on a
+red→neutral→green diverging scale centered at 0, symmetric range across all
+expiries so color is comparable; the same P/L appears on the call ribbons'
+hover. This is the projection layer's opinion made volumetric — and it
+inherits all of the projection layer's measured error (§6 still applies).
+
+**Percent loading bars.** Chart renders report real stage-based progress
+instead of an indeterminate spinner: `project_all_scales`, `walk_forward`,
+`top_following_fractals`, and `get_option_chain` all take an optional
+`progress(done, total, label)` callback; the app writes stages into a
+module-level dict which a 350 ms `dcc.Interval` polls to draw the bar
+(Flask runs threaded, so polling proceeds while a render computes — fine for
+a single-user local app).
+
 ---
 
 ## 6. Falsification (`backtest.py`) — do not skip

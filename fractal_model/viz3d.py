@@ -246,7 +246,9 @@ def fractal_figure_2d(ticker: str, df: pd.DataFrame,
 
 
 def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
-                           spot: float | None = None) -> go.Figure:
+                           spot: float | None = None,
+                           exp_spot: dict[int, float] | None = None
+                           ) -> go.Figure:
     """3D option-chain fractal: days-to-expiry × log10 strike × log10 price.
 
     Each expiration's call curve C(K) is one ribbon through the surface.
@@ -255,6 +257,13 @@ def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
     whose price-vs-strike geometry is the same fractal shape share a
     color — the term structure's self-similarity made visible. Puts are
     drawn dimmer in the family color of their expiry.
+
+    The space under each call ribbon is filled with a curtain mesh shaded
+    by **model-expected profit at expiry**: buy the call at today's price,
+    settle at the fractal projection's spot for that date (`exp_spot`,
+    days-to-expiry -> projected price; falls back to today's spot). Green
+    = the model expects the contract to finish worth more than it costs,
+    red = expected loss. The same P/L is reported on hover.
     """
     fig = go.Figure()
     expiries = sorted(pd.to_datetime(chain["expiration"].unique()))
@@ -268,39 +277,88 @@ def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
             s, rng = to_shape(np.log10(c["call"].values))
             if rng > 0:
                 shape = s
-        curves.append((exp, sub, c, shape))
+        dte = int(sub["dte"].iloc[0]) if len(sub) else 0
+        s_exp = (exp_spot or {}).get(dte, spot)
+        profit = None
+        if s_exp is not None and len(c) > 0:
+            profit = (np.maximum(s_exp - c["strike"].values, 0.0)
+                      - c["call"].values)
+        curves.append((exp, dte, sub, c, shape, profit))
 
-    shaped = [i for i, (_, _, _, s) in enumerate(curves) if s is not None]
-    fams = group_families([curves[i][3] for i in shaped], min_corr=0.90)
+    shaped = [i for i, cv in enumerate(curves) if cv[4] is not None]
+    fams = group_families([curves[i][4] for i in shaped], min_corr=0.90)
     fam_of = {i: f for i, f in zip(shaped, fams)}
 
-    z_min = np.inf
-    legend_done = set()
-    for i, (exp, sub, c, shape) in enumerate(curves):
+    # shared floor and symmetric P/L color range across all expiries
+    z_all = []
+    for (_, _, sub, c, _, _) in curves:
+        if len(c):
+            z_all.append(np.log10(c["call"].values))
+        p = sub[(sub["put"] > 0) & np.isfinite(sub["put"])]
+        if len(p):
+            z_all.append(np.log10(p["put"].values))
+    if not z_all:
+        return fig
+    z_floor = float(min(z.min() for z in z_all)) - 0.08
+    max_abs_pl = max((float(np.max(np.abs(cv[5]))) for cv in curves
+                      if cv[5] is not None and len(cv[5])), default=1.0) or 1.0
+    PL_SCALE = [[0.0, "#C23B80"], [0.5, "#232A40"], [1.0, "#2E9E5B"]]
+
+    for i, (exp, dte, sub, c, shape, profit) in enumerate(curves):
         if len(c) == 0:
             continue
         f = fam_of.get(i)
         color = BOX_COLORS[f % len(BOX_COLORS)] if f is not None else "#5A6478"
         letter = chr(ord("A") + f % 26) if f is not None else "?"
-        dte = int(sub["dte"].iloc[0])
+        log_k = np.log10(c["strike"].values)
         z = np.log10(c["call"].values)
-        z_min = min(z_min, z.min())
+
+        pl_col = (profit if profit is not None
+                  else np.full(len(c), np.nan))
+        pl_line = ("<br>model P/L %{customdata[2]:+,.2f}"
+                   if profit is not None else "")
         fig.add_trace(go.Scatter3d(
-            x=np.full(len(c), dte), y=np.log10(c["strike"].values), z=z,
+            x=np.full(len(c), dte), y=log_k, z=z,
             mode="lines", line=dict(color=color, width=4),
             name=f"{exp.date()} calls · pattern {letter}",
             legendgroup=f"fam-{letter}",
-            customdata=np.stack([c["strike"].values, c["call"].values], axis=-1),
+            customdata=np.stack([c["strike"].values, c["call"].values,
+                                 pl_col], axis=-1),
             hovertemplate=(f"{exp.date()} · {dte}d"
                            "<br>strike $%{customdata[0]:,.2f}"
-                           "<br>call $%{customdata[1]:,.2f}<extra></extra>"),
+                           "<br>call $%{customdata[1]:,.2f}"
+                           f"{pl_line}<extra></extra>"),
         ))
+
+        # curtain fill under the call ribbon: expected profit over time
+        n_pts = len(c)
+        if n_pts >= 2:
+            xs = np.concatenate([np.full(n_pts, dte)] * 2)
+            ys = np.concatenate([log_k, log_k])
+            zs = np.concatenate([z, np.full(n_pts, z_floor)])
+            tri_i, tri_j, tri_k = [], [], []
+            for q in range(n_pts - 1):
+                tri_i += [q, q + 1]
+                tri_j += [q + 1, n_pts + q + 1]
+                tri_k += [n_pts + q, n_pts + q]
+            mesh_kw = dict(x=xs, y=ys, z=zs, i=tri_i, j=tri_j, k=tri_k,
+                           opacity=0.30, hoverinfo="skip",
+                           name=f"{exp.date()} expected P/L",
+                           legendgroup=f"fam-{letter}", showlegend=False,
+                           flatshading=True)
+            if profit is not None:
+                mesh_kw.update(intensity=np.concatenate([profit, profit]),
+                               colorscale=PL_SCALE, cmin=-max_abs_pl,
+                               cmax=max_abs_pl, cmid=0.0, showscale=False)
+            else:
+                mesh_kw.update(color=color)
+            fig.add_trace(go.Mesh3d(**mesh_kw))
+
         p = sub[(sub["put"] > 0) & np.isfinite(sub["put"])]
         if len(p) > 0:
-            zp = np.log10(p["put"].values)
-            z_min = min(z_min, zp.min())
             fig.add_trace(go.Scatter3d(
-                x=np.full(len(p), dte), y=np.log10(p["strike"].values), z=zp,
+                x=np.full(len(p), dte), y=np.log10(p["strike"].values),
+                z=np.log10(p["put"].values),
                 mode="lines", line=dict(color=color, width=2), opacity=0.35,
                 name=f"{exp.date()} puts", legendgroup=f"fam-{letter}",
                 showlegend=False,
@@ -311,10 +369,10 @@ def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
                                "<br>put $%{customdata[1]:,.2f}<extra></extra>"),
             ))
 
-    if spot and spot > 0 and np.isfinite(z_min):
+    if spot and spot > 0:
         dtes = sorted(chain["dte"].unique())
         fig.add_trace(go.Scatter3d(
-            x=[dtes[0], dtes[-1]], y=[np.log10(spot)] * 2, z=[z_min] * 2,
+            x=[dtes[0], dtes[-1]], y=[np.log10(spot)] * 2, z=[z_floor] * 2,
             mode="lines", line=dict(color=PROJ, width=3, dash="dot"),
             name=f"spot ${spot:,.2f}",
             hoverinfo="name",
