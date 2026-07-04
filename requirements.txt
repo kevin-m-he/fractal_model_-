@@ -3,6 +3,6 @@ pandas>=2.0
 scipy>=1.10
 plotly>=5.18
 dash>=2.14
-yfinance>=0.2.40
+yfinance>=1.0
 requests>=2.31
 pyarrow>=14.0

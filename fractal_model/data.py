@@ -18,13 +18,21 @@ import requests
 CACHE_DIR = Path(os.environ.get("FRACTAL_CACHE", Path.home() / ".fractal_model_cache"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_TTL_SECONDS = 6 * 3600  # refresh cached data every 6 hours
+SHARES_TTL_SECONDS = 7 * 24 * 3600  # share counts move on buybacks/dilution, not daily
 
 REQUIRED_COLS = ["Open", "High", "Low", "Close", "Volume"]
 
 
+def _safe_name(ticker: str) -> str:
+    return ticker.upper().replace("/", "_").replace("^", "_")
+
+
 def _cache_path(ticker: str) -> Path:
-    safe = ticker.upper().replace("/", "_").replace("^", "_")
-    return CACHE_DIR / f"{safe}.parquet"
+    return CACHE_DIR / f"{_safe_name(ticker)}.parquet"
+
+
+def _shares_cache_path(ticker: str) -> Path:
+    return CACHE_DIR / f"{_safe_name(ticker)}_shares.parquet"
 
 
 def _from_cache(ticker: str, max_age: float = CACHE_TTL_SECONDS) -> pd.DataFrame | None:
@@ -115,3 +123,86 @@ def get_history(ticker: str, min_rows: int = 250) -> pd.DataFrame:
         f"Could not fetch at least {min_rows} daily bars for '{ticker}' "
         f"from Yahoo Finance or Stooq."
     )
+
+
+def _split_adjust(s: pd.Series, tk) -> pd.Series:
+    """Rescale historical share counts to today's split basis.
+
+    Yahoo reports raw share counts as filed, but prices come back
+    split-adjusted — without this, a 10:1 split shows as a fake 10x
+    cliff in the shares axis and understates pre-split market cap.
+    """
+    try:
+        splits = tk.splits
+        if splits is not None and len(splits) > 0:
+            splits = splits[splits > 0]
+            splits.index = pd.to_datetime(splits.index).tz_localize(None).normalize()
+            for dt, ratio in splits.items():
+                s.loc[s.index < dt] *= float(ratio)
+    except Exception:
+        pass
+    return s
+
+
+def _fetch_shares_series(ticker: str) -> pd.Series | None:
+    """Historical shares-outstanding series from Yahoo (usually ~2y of
+    filings-derived points, normalized to the current split basis),
+    falling back to the current count as a single-point series. Crypto
+    uses circulating supply."""
+    try:
+        import yfinance as yf
+
+        tk = yf.Ticker(ticker)
+        try:
+            s = tk.get_shares_full(start="1900-01-01")
+        except Exception:
+            s = None
+        if s is not None and len(s) > 0:
+            s = s.astype(float)
+            s.index = pd.to_datetime(s.index).tz_localize(None).normalize()
+            s = s[s > 0]
+            s = s[~s.index.duplicated(keep="last")].sort_index()
+            if len(s) > 0:
+                return _split_adjust(s, tk)
+        info = tk.get_info()
+        for key in ("sharesOutstanding", "impliedSharesOutstanding",
+                    "circulatingSupply"):
+            v = info.get(key)
+            if v:
+                return pd.Series([float(v)], index=[pd.Timestamp.now().normalize()])
+    except Exception:
+        pass
+    return None
+
+
+def get_shares(ticker: str, index: pd.DatetimeIndex) -> pd.Series | None:
+    """Shares outstanding aligned to `index` (one value per bar), or None.
+
+    Values between reported counts are forward-filled; dates before the
+    earliest report are back-filled with it (Yahoo's share history rarely
+    reaches back further than a couple of years). Cached like prices, but
+    with a weekly TTL since counts only move on buybacks and dilution.
+    """
+    s: pd.Series | None = None
+    p = _shares_cache_path(ticker)
+    if p.exists() and (time.time() - p.stat().st_mtime) < SHARES_TTL_SECONDS:
+        try:
+            s = pd.read_parquet(p)["Shares"]
+        except Exception:
+            s = None
+    if s is None:
+        s = _fetch_shares_series(ticker)
+        if s is not None:
+            try:
+                s.rename("Shares").to_frame().to_parquet(p)
+            except Exception:
+                pass  # cache is best-effort
+        elif p.exists():  # stale cache beats nothing
+            try:
+                s = pd.read_parquet(p)["Shares"]
+            except Exception:
+                s = None
+    if s is None or len(s) == 0:
+        return None
+    aligned = s.reindex(s.index.union(index)).ffill().bfill().reindex(index)
+    return aligned.astype(float)

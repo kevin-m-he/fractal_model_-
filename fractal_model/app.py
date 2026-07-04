@@ -4,8 +4,10 @@
 Run:  python -m fractal_model.app   then open http://127.0.0.1:8050
 
 Tabs:
-  Visualizer  — search any ticker, render the 3D price/time/volume
-                fractal with detected motif boxes and the projected
+  Visualizer  — search any ticker, render the 3D time × shares × price
+                fractal (the shares axis makes the geometry read as
+                company valuation: log price + log shares = log market
+                cap) with detected motif boxes and the projected
                 buy/sell path, all scales ranked by confidence.
   Top 10      — scan the default universe, rank by best-scale
                 confidence, show buy price / sell target / timeframe.
@@ -24,7 +26,7 @@ warnings.filterwarnings("ignore")
 import dash
 from dash import Dash, dcc, html, Input, Output, State, dash_table, no_update
 
-from .data import get_history
+from .data import get_history, get_shares
 from .projection import project_all_scales
 from .backtest import walk_forward
 from .scanner import top_following_fractals
@@ -49,8 +51,8 @@ def _header():
             html.Span("MODEL", style={"color": "#F2E9DC", "fontWeight": 300}),
         ], style={"fontSize": "26px", "letterSpacing": "3px",
                   "fontFamily": "monospace"}),
-        html.Div("self-similar price structure across scale · "
-                 "time × volume × price", style={"color": "#6B7488",
+        html.Div("self-similar valuation structure across scale · "
+                 "time × shares outstanding × price", style={"color": "#6B7488",
                  "fontSize": "12px", "fontFamily": "monospace"}),
         html.Div(DISCLAIMER, style={"color": "#8B6A2B", "fontSize": "11px",
                  "marginTop": "6px", "fontFamily": "monospace"}),
@@ -116,7 +118,11 @@ def render_viz(_n, ticker):
         return html.Div(f"No fractal motifs found for {ticker} at any scale.",
                         style={"color": "#8B6A2B"}), ticker
     best = projs[0]
-    fig3d = fractal_figure_3d(ticker, df, best.matches, best)
+    try:
+        shares = get_shares(ticker, df.index)
+    except Exception:
+        shares = None
+    fig3d = fractal_figure_3d(ticker, df, best.matches, best, shares=shares)
     fig2d = fractal_figure_2d(ticker, df, best.matches, best)
 
     cards = []
@@ -272,6 +278,12 @@ def run_bt(_n, ticker):
 
 
 def main():
+    import threading
+    import webbrowser
+
+    # launched from the desktop shortcut there's no terminal user watching —
+    # pop the browser once the server has had a moment to bind
+    threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:8050")).start()
     app.run(debug=False, host="127.0.0.1", port=8050)
 
 

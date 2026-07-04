@@ -2,20 +2,26 @@
 
 A local desktop application that detects **self-similar price patterns across
 scale** and projects them forward — working *solely* on fractal structure
-(price, time, volume), with no fundamentals, sentiment, or macro inputs.
+(price, time, shares outstanding), with no fundamentals, sentiment, or macro
+inputs.
 
-It renders each stock as a **3D fractal** (time × volume × price), boxes the
-recurring motifs it finds, and — critically — **backtests itself out-of-sample
-against a naive baseline and shows you the verdict**, because a pattern model
-that can't be falsified is astrology with a nicer chart.
+It renders each stock as a **3D fractal** (time × shares outstanding × price),
+so the geometry reads as **company valuation** rather than order flow — since
+`log(market cap) = log(price) + log(shares)`, buybacks and dilution visibly
+bend the path. It boxes the recurring motifs it finds, and — critically —
+**backtests itself out-of-sample against a naive baseline and shows you the
+verdict**, because a pattern model that can't be falsified is astrology with a
+nicer chart.
 
 ![concept](assets/concept.svg)
 
 ## What it does
 
-- **3D fractal visualizer** — search any ticker, rotate its price/time/volume
-  fractal, see detected self-affine motifs as colored boxes (a 3D generalization
-  of hand-drawn chart annotations).
+- **3D fractal visualizer** — search any ticker, rotate its time/shares/price
+  valuation fractal, see detected self-affine motifs as colored boxes (a 3D
+  generalization of hand-drawn chart annotations). Hover shows price, share
+  count, and market cap per day; tickers without share data fall back to a
+  flat shares axis.
 - **All-scales projection** — from ~3-month to ~4-year patterns, each with a
   buy zone, sell target, timeframe, and an explicit confidence score, ranked by
   confidence.
@@ -41,11 +47,22 @@ feed a transparent confidence score. Full derivation:
 ```bash
 pip install -r requirements.txt
 python -m fractal_model.app
-# open http://127.0.0.1:8050
+# your browser opens at http://127.0.0.1:8050
 ```
 
-First run fetches history from Yahoo Finance (Stooq fallback) and caches it
-locally.
+On Windows you can instead double-click `run_fractal_model.bat`, and put a
+**desktop shortcut** in place with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\create_desktop_shortcut.ps1
+```
+
+That creates a "Fractal Model" icon on your Desktop that starts the server and
+opens the app in your browser; closing the console window stops it.
+
+First run fetches price history from Yahoo Finance (Stooq fallback) and shares
+outstanding from Yahoo (filings-derived history where available, otherwise the
+current count) and caches both locally.
 
 ## Honest status
 

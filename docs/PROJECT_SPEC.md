@@ -19,7 +19,7 @@ annotated BTC/NFLX charts show this as nested boxes: a small early pattern
 reappears, blown up, later on.
 
 This project takes that seriously **and tests it**. The model detects recurring
-self-affine motifs and projects them forward, using **only** price/volume
+self-affine motifs and projects them forward, using **only** price/time/share
 structure — no fundamentals, no sentiment, no macro. But a pattern model
 validated only on the charts that inspired it is not a model. So the falsual
 core deliverable is the **walk-forward backtest with a naive-drift baseline**
@@ -181,13 +181,25 @@ ranked by confidence — this is the "all scales, ranked by confidence" mode.
 
 ## 5. 3D visualization (`viz3d.py`)
 
-Axes: **time × log₁₀ volume × log₁₀ price**. Price path = 3D ribbon. Each motif =
-translucent `Mesh3d` box spanning its time/price extent with depth over the
-window's volume range — the 3D generalization of the hand-drawn rectangles.
-Matched historical↔live pairs share a color from the annotation palette. A 2D
-view (`fractal_figure_2d`) reproduces the owner's boxed-chart style for direct
-comparison. Volume was chosen over shares-outstanding as the Z-axis because shares
-outstanding is a near-flat step function and gives the fractal no geometry.
+Axes: **time × log₁₀ shares outstanding × log₁₀ price**. Price path = 3D ribbon.
+Each motif = translucent `Mesh3d` box spanning its time/price extent with depth
+over the window's share-count range (padded to a visible minimum, since share
+counts barely move inside a window) — the 3D generalization of the hand-drawn
+rectangles. Matched historical↔live pairs share a color from the annotation
+palette. A 2D view (`fractal_figure_2d`) reproduces the owner's boxed-chart
+style for direct comparison.
+
+The depth axis was switched from volume to shares outstanding so the geometry
+models **company valuation instead of order flow**: `log₁₀ cap = log₁₀ price +
+log₁₀ shares`, so the ribbon's combined height is log market cap, and buybacks/
+dilution bend the path where pure price cannot see them. The cost is geometry —
+shares outstanding is a near-flat step function, hence the minimum box depth —
+and coverage: Yahoo's filings-derived share history (`get_shares_full`) rarely
+reaches back more than ~2 years, so earlier dates are back-filled with the
+oldest known count, and tickers with no share data at all (indices, some
+crypto) render with a flat shares axis. Hover text reports per-day price,
+shares, and market cap. Fetching lives in `data.get_shares` with a weekly-TTL
+parquet cache beside the price cache.
 
 ---
 
