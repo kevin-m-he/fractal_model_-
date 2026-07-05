@@ -30,7 +30,7 @@ from .data import get_history, get_option_chain, get_shares
 from .projection import project_all_scales
 from .backtest import walk_forward
 from .scanner import top_following_fractals
-from .viz3d import (fractal_figure_3d, fractal_figure_2d,
+from .viz3d import (fractal_figure_3d, fractal_figure_2d, family_summaries,
                     option_chain_figure_3d, BG)
 
 BLANK = {"paper_bgcolor": BG, "plot_bgcolor": BG, "template": "plotly_dark"}
@@ -222,6 +222,7 @@ def render_viz(_n, mode, ticker):
         _prog("viz", 86, "rendering 3D scene")
         fig3d = fractal_figure_3d(ticker, df, all_matches, best, shares=shares)
         fig2d = fractal_figure_2d(ticker, df, all_matches, best)
+        summaries = family_summaries(all_matches, df["Close"])
     finally:
         _prog("viz", 100)
 
@@ -255,6 +256,14 @@ def render_viz(_n, mode, ticker):
                  "fontFamily": "monospace"}),
                  dcc.Graph(figure=fig3d, config={"displModeBar": True})],
                  style=CARD),
+        html.Div([html.Div(s["text"], style={
+            "border": f"1px solid {s['color']}", "borderRadius": "14px",
+            "padding": "8px 14px", "margin": "0 8px 8px 0",
+            "color": "#D7DCE8", "fontSize": "12px",
+            "fontFamily": "monospace", "backgroundColor": "#131829",
+            "maxWidth": "560px"}) for s in summaries],
+            style={"display": "flex", "flexWrap": "wrap",
+                   "marginBottom": "6px"}),
         html.Div([html.Div("2D view with motif boxes — same letter = same "
                  "pattern (A′ marks the live window of family A)",
                  style={"color": "#6B7488",

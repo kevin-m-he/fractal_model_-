@@ -24,7 +24,12 @@ nicer chart.
   shape space, and each family's translucent box marks the live window it
   refers to (the 2D view letters them — `A` historical, `A′` live). Hover
   shows price, share count, and market cap per day; tickers without share
-  data fall back to a flat shares axis. The depth axis is shares outstanding
+  data fall back to a flat shares axis. Buy zone and sell target are marked
+  directly on the projected 3D path, axes are labeled in real dollars and
+  share counts (log-scaled, never raw logs), and a one-sentence bubble under
+  the chart explains each pattern — e.g. "Pattern E: after its 1 historical
+  occurrence price averaged −27% over the next ~21 trading days — a downtrend
+  may follow once the live fractal completes." The depth axis is shares outstanding
   rather than volume by design: motif matching runs on price shape alone, so
   the third axis is context, and slow-moving valuation context (buybacks,
   dilution) reads better than daily volume noise.

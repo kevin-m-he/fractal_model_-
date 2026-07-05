@@ -57,7 +57,7 @@ def test_viz3d_shares_axis():
     path = fig.data[0]
     assert np.isclose(path.y[0], np.log10(5e8))
     assert np.isclose(path.y[-1], np.log10(4.6e8))
-    assert fig.layout.scene.yaxis.title.text == "log10 shares outstanding"
+    assert fig.layout.scene.yaxis.title.text == "shares outstanding (log scale)"
     # market cap in hover data: close * shares formatted with B suffix
     assert "B" in path.customdata[0][3]
 
@@ -97,6 +97,42 @@ def test_family_boxes_share_colors():
     fam_color = {}
     for b in boxes:
         assert fam_color.setdefault(b["fam"], b["color"]) == b["color"]
+
+
+def test_family_summaries_sentences():
+    from fractal_model.viz3d import family_summaries
+    from fractal_model.motif import find_motifs
+    seg = np.sin(np.linspace(0, 3 * np.pi, 100))
+    x = np.concatenate([seg * a for a in (0.5, 1.0, 2.0)])
+    close = pd.Series(100 * np.exp(np.cumsum(np.full(len(x), 0.001)) + x * 0.1),
+                      index=pd.bdate_range("2012-01-01", periods=len(x)))
+    matches = find_motifs(close, live_len=100, hurst=0.5)
+    out = family_summaries(matches, close)
+    assert out, "expected at least one family summary"
+    for s in out:
+        assert s["text"].startswith(f"Pattern {s['fam']}:")
+        assert "may follow once the live fractal completes" in s["text"] \
+            or "little net movement" in s["text"]
+        assert s["color"].startswith("#")
+
+
+def test_buy_sell_markers_on_3d():
+    from fractal_model.viz3d import fractal_figure_3d
+    from fractal_model.projection import project
+    n = 2000
+    rng = np.random.default_rng(3)
+    close = pd.Series(100 * np.exp(np.cumsum(rng.standard_normal(n) * 0.01)),
+                      index=pd.bdate_range("2010-01-01", periods=n))
+    p = project("SYN", close, live_len=126, horizon=84)
+    assert p is not None
+    df = _synthetic_ohlcv(n, seed=3)
+    df["Close"] = close.values
+    fig = fractal_figure_3d("SYN", df, p.matches, p)
+    names = [tr.name or "" for tr in fig.data]
+    assert any(n_.startswith("buy zone") for n_ in names)
+    assert any(n_.startswith("sell target") for n_ in names)
+    # dollar ticks on the price axis, not raw logs
+    assert fig.layout.scene.zaxis.ticktext[0].startswith("$")
 
 
 def test_option_chain_figure_offline():

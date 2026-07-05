@@ -85,6 +85,67 @@ def _fmt_cap(x: float) -> str:
     return f"${x:,.0f}"
 
 
+def _fmt_qty(x: float) -> str:
+    for div, suf in [(1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")]:
+        if abs(x) >= div:
+            return f"{x / div:,.1f}{suf}"
+    return f"{x:,.0f}"
+
+
+def _fmt_px(x: float) -> str:
+    return f"${x:,.2f}" if x < 10 else f"${x:,.0f}"
+
+
+def _dollar_ticks(lo: float, hi: float, n: int = 6) -> tuple[list, list]:
+    """Tick positions in log10 space labeled with actual dollar prices,
+    so the log axes read in real money."""
+    vals = list(np.linspace(lo, hi, n))
+    return vals, [_fmt_px(10 ** v) for v in vals]
+
+
+def family_summaries(matches: list[MotifMatch], close: pd.Series,
+                     max_matches: int = 24) -> list[dict]:
+    """One plain-English sentence per pattern family, computed from what
+    actually followed that family's historical occurrences — e.g.
+    'Pattern A: … a downtrend may follow once the live fractal completes.'
+    Forward window is half the occurrence's own length (min 10 bars).
+    """
+    closev = close.values.astype(float)
+    boxes = _family_boxes(matches, np.log(closev), max_matches)
+    out = []
+    for fam in sorted({b["fam"] for b in boxes}):
+        hist = [b for b in boxes if b["fam"] == fam and b["kind"] == "hist"]
+        if not hist:
+            continue
+        rets, spans = [], []
+        for b in hist:
+            fwd_len = max(10, (b["b"] - b["a"]) // 2)
+            end = min(len(closev) - 1, b["b"] - 1 + fwd_len)
+            if end > b["b"] - 1:
+                rets.append(closev[end] / closev[b["b"] - 1] - 1.0)
+                spans.append(end - (b["b"] - 1))
+        if not rets:
+            continue
+        avg = float(np.mean(rets))
+        up_frac = float(np.mean([r > 0 for r in rets]))
+        n = len(rets)
+        if avg > 0.02:
+            trend = "an uptrend may follow once the live fractal completes"
+        elif avg < -0.02:
+            trend = "a downtrend may follow once the live fractal completes"
+        else:
+            trend = ("little net movement is implied once the live fractal "
+                     "completes")
+        out.append({
+            "fam": fam, "color": hist[0]["color"],
+            "text": (f"Pattern {fam}: after its {n} historical occurrence"
+                     f"{'s' if n != 1 else ''} price averaged {avg:+.0%} "
+                     f"over the next ~{int(np.mean(spans))} trading days "
+                     f"(up {up_frac:.0%} of the time) — {trend}."),
+        })
+    return out
+
+
 def fractal_figure_3d(ticker: str, df: pd.DataFrame,
                       matches: list[MotifMatch] | None = None,
                       projection: Projection | None = None,
@@ -166,12 +227,45 @@ def fractal_figure_3d(ticker: str, df: pd.DataFrame,
                 z=np.log10(band), mode="lines",
                 line=dict(color=PROJ, width=1.5),
                 opacity=0.45, name=nm, showlegend=False,
-                hoverinfo="skip"))
+                hovertemplate=f"{nm} $%{{text}}<extra></extra>",
+                text=[f"{p:,.2f}" for p in band]))
+
+        # buy zone / sell target markers on the projected path itself
+        b_i = int(np.argmin(np.abs(projection.dates - projection.buy_day)))
+        s_i = int(np.argmin(np.abs(projection.dates - projection.sell_day)))
+        for i_d, px, day, nm, col, tpos in [
+                (b_i, projection.buy_price, projection.buy_day,
+                 "buy zone", "#2E9E5B", "bottom center"),
+                (s_i, projection.sell_price, projection.sell_day,
+                 "sell target", "#C23B80", "top center")]:
+            fig.add_trace(go.Scatter3d(
+                x=[len(df) + i_d], y=[v_last], z=[np.log10(px)],
+                mode="markers+text",
+                marker=dict(color=col, size=7, symbol="diamond"),
+                text=[f"{nm} ${px:,.2f}"], textposition=tpos,
+                textfont=dict(color=col, size=11),
+                name=f"{nm} ${px:,.2f} by {day.date()}",
+                hovertemplate=(f"{nm} ${px:,.2f}"
+                               f"<br>{day.date()}<extra></extra>"),
+            ))
 
     # year tick labels on the time axis
     years = pd.Series(dates.year)
     tickvals = [int(years[years == y].index[0]) for y in sorted(years.unique())][::max(1, len(years.unique()) // 8)]
     ticktext = [str(dates[v].year) for v in tickvals]
+
+    # label the log axes in real dollars / share counts
+    z_span = [log_p]
+    if projection is not None:
+        z_span.append(np.log10(projection.median_path))
+    z_all = np.concatenate(z_span)
+    z_ticks, z_text = _dollar_ticks(float(z_all.min()), float(z_all.max()))
+    yaxis = dict(title=y_title, backgroundcolor=BG, gridcolor=GRID)
+    if shares is not None:
+        y_ticks = list(np.linspace(float(log_s.min()), float(log_s.max()), 4))
+        yaxis.update(title="shares outstanding (log scale)",
+                     tickvals=y_ticks,
+                     ticktext=[_fmt_qty(10 ** v) for v in y_ticks])
 
     fig.update_layout(
         template="plotly_dark",
@@ -179,8 +273,9 @@ def fractal_figure_3d(ticker: str, df: pd.DataFrame,
         scene=dict(
             xaxis=dict(title="time", tickvals=tickvals, ticktext=ticktext,
                        backgroundcolor=BG, gridcolor=GRID),
-            yaxis=dict(title=y_title, backgroundcolor=BG, gridcolor=GRID),
-            zaxis=dict(title="log10 price", backgroundcolor=BG, gridcolor=GRID),
+            yaxis=yaxis,
+            zaxis=dict(title="price ($, log scale)", tickvals=z_ticks,
+                       ticktext=z_text, backgroundcolor=BG, gridcolor=GRID),
             aspectratio=dict(x=2.2, y=0.8, z=1.0),
             camera=dict(eye=dict(x=1.6, y=-1.9, z=0.7)),
         ),
@@ -300,6 +395,9 @@ def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
     if not z_all:
         return fig
     z_floor = float(min(z.min() for z in z_all)) - 0.08
+    z_top = float(max(z.max() for z in z_all))
+    strikes_pos = chain.loc[chain["strike"] > 0, "strike"]
+    k_lo, k_hi = np.log10(strikes_pos.min()), np.log10(strikes_pos.max())
     # curtain color = return on premium, not $ P/L: a symmetric $ range let
     # deep-ITM contracts (huge absolute swings) wash every ordinary strike
     # into the gray midpoint. Return per dollar spent is comparable across
@@ -395,10 +493,14 @@ def option_chain_figure_3d(ticker: str, chain: pd.DataFrame,
         scene=dict(
             xaxis=dict(title="days to expiry", backgroundcolor=BG,
                        gridcolor=GRID),
-            yaxis=dict(title="log10 strike", backgroundcolor=BG,
-                       gridcolor=GRID),
-            zaxis=dict(title="log10 option price", backgroundcolor=BG,
-                       gridcolor=GRID),
+            yaxis=dict(title="strike ($, log scale)",
+                       tickvals=_dollar_ticks(float(k_lo), float(k_hi), 5)[0],
+                       ticktext=_dollar_ticks(float(k_lo), float(k_hi), 5)[1],
+                       backgroundcolor=BG, gridcolor=GRID),
+            zaxis=dict(title="option price ($, log scale)",
+                       tickvals=_dollar_ticks(z_floor, z_top, 5)[0],
+                       ticktext=_dollar_ticks(z_floor, z_top, 5)[1],
+                       backgroundcolor=BG, gridcolor=GRID),
             aspectratio=dict(x=1.6, y=1.0, z=0.9),
             camera=dict(eye=dict(x=1.7, y=-1.7, z=0.8)),
         ),
